@@ -1,10 +1,8 @@
 defmodule FarmbotOS.SysCalls.CheckUpdate do
   require FarmbotCore.Logger
 
-  alias FarmbotOS.UpdateSupport
   alias FarmbotCore.JSON
   alias FarmbotCore.Config
-  alias FarmbotCore.{BotState}
 
   @skip %{"image_url" => nil}
   @release_path "/api/releases?platform="
