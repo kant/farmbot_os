@@ -13,7 +13,14 @@ defmodule FarmbotOS.UpdateSupport do
   # side effects. We use @dl_path as a lock file to prevent
   # this. No lock file == no OTA in progress.
   def in_progress?(path \\ to_string(@dl_path)) do
-    File.exists?(path)
+    result = File.exists?(path)
+
+    FarmbotCore.Logger.debug(
+      3,
+      "File.exists?(#{inspect(path)}): #{inspect(result)}"
+    )
+
+    result
   end
 
   # Delete @dl_path so that the user can run an OTA again.
@@ -22,6 +29,8 @@ defmodule FarmbotOS.UpdateSupport do
     if in_progress?() do
       FarmbotCore.Logger.debug(3, "Cleaning up file artifacts.")
       File.rm!(to_string(@dl_path))
+    else
+      FarmbotCore.Logger.debug(3, "*NOT* Cleaning up file artifacts.")
     end
   end
 
@@ -40,8 +49,7 @@ defmodule FarmbotOS.UpdateSupport do
   # Downloads an arbitrary URL to @dl_path
   def download_update_image(url) do
     FarmbotCore.Logger.debug(3, "Downloading FBOS upgrade from #{url}")
-    t = FarmbotCore.Config.get_config_value(:string, "authorization", "token")
-    params = {to_charlist(url), [{'Authorization', to_charlist(t)}]}
+    params = {to_charlist(url), []}
 
     {:ok, :saved_to_file} = :httpc.request(:get, params, [], stream: @dl_path)
   end
@@ -59,16 +67,24 @@ defmodule FarmbotOS.UpdateSupport do
   # the server or if an error occurs.
   def install_update(nil) do
     FarmbotCore.Logger.debug(3, "Not downloading update.")
+    {:error, "No update available."}
   end
 
   # Upgrades the device to an arbitrary URL pointing to a
   # *.fw file.
   def install_update(url) do
     try do
+      FarmbotCore.Logger.debug(3, "prevent_double_installation!()")
       prevent_double_installation!()
+      FarmbotCore.Logger.debug(3, "download_update_image(url)")
       download_update_image(url)
+      FarmbotCore.Logger.debug(3, "do_flash_firmware()")
       do_flash_firmware()
+      :ok
+    rescue
+      error -> error
     after
+      FarmbotCore.Logger.debug(3, "clean_up()")
       clean_up()
     end
   end
@@ -76,6 +92,7 @@ defmodule FarmbotOS.UpdateSupport do
   # :httpc callback when a JSON download succeeds (/api/releases?platform=foo)
   def handle_http_response({:ok, {_status_line, _response_headers, body}}) do
     {:ok, map} = JSON.decode(body)
+    FarmbotCore.Logger.debug(3, "Fetched meta data: " <> inspect(body))
     map
   end
 
@@ -91,8 +108,9 @@ defmodule FarmbotOS.UpdateSupport do
   # URL to a *.fw. It is _not_ a *.fw, however.
   def download_meta_data(target) do
     url = calculate_url(target)
-    FarmbotCore.Logger.debug(3, "Downloading meta data from #{url}")
-    http_resp = :httpc.request(:get, {to_charlist(url), []}, [], [])
+    t = FarmbotCore.Config.get_config_value(:string, "authorization", "token")
+    params = {to_charlist(url), [{'Authorization', to_charlist(t)}]}
+    http_resp = :httpc.request(:get, params, [], [])
     handle_http_response(http_resp)
   end
 
@@ -101,7 +119,9 @@ defmodule FarmbotOS.UpdateSupport do
   def get_target() do
     # Read value set by
     try do
-      apply(Nerves.Runtime.KV, :get_active, ["nerves_fw_platform"])
+      t = apply(Nerves.Runtime.KV, :get_active, ["nerves_fw_platform"])
+      FarmbotCore.Logger.debug(3, "Got target platform: #{t}")
+      t
     rescue
       error ->
         e = inspect(error)
